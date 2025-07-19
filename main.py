@@ -62,7 +62,7 @@ def update_google_sheet(request):
     """
     HTTP Cloud Run function to update Google Sheet based on Twilio Studio webhook.
     This function expects a POST request with a JSON payload containing
-    the sheetRowIndex and the playbook output parameters.
+    the sheetRowIndex, callStatus, and callSummary.
 
     Args:
         request (flask.Request): The request object.
@@ -86,13 +86,10 @@ def update_google_sheet(request):
     logging.info(f"Received payload: {json.dumps(request_json, indent=2)}")
 
     # Extract parameters from the incoming webhook payload.
-    # These keys must match what you send from Twilio Studio's HTTP Request widget.
+    # Only expecting sheetRowIndex, callStatus, and callSummary now.
     sheet_row_index = request_json.get('sheetRowIndex')
-    appoint_date_time = request_json.get('appointmentDate') # Playbook output 'appointmentDate' maps to sheet's 'appointDateTime'
-    appointment_time = request_json.get('appointmentTime')
     call_status = request_json.get('callStatus')
     call_summary = request_json.get('callSummary')
-    email_id = request_json.get('email') # Assuming 'email' will be passed from Playbook if collected
 
     # Validate sheet_row_index
     if not sheet_row_index:
@@ -109,34 +106,22 @@ def update_google_sheet(request):
         worksheet = get_sheet()
 
         # Define column mappings for your Google Sheet (1-based indexing)
-        # Based on your new sheet structure (from screenshot):
+        # Based on assumed new simplified sheet structure:
         # A: Leadphone (1)
         # B: customerName (2)
         # C: businessType (3)
         # D: details (4)
-        # E: appointDateTime (5)
-        # F: appointmentTime (6)
-        # G: callStatus (7)
-        # H: callSummary (8)
-        # I: emailID (9)
-        COL_APPOINT_DATE_TIME = 5   # Column E
-        COL_APPOINTMENT_TIME = 6    # Column F
-        COL_CALL_STATUS = 7         # Column G
-        COL_CALL_SUMMARY = 8        # Column H
-        COL_EMAIL_ID = 9            # Column I
+        # E: callStatus (5)
+        # F: callSummary (6)
+        COL_CALL_STATUS = 5         # Column E
+        COL_CALL_SUMMARY = 6        # Column F
 
         updates = {}
         # Populate updates dictionary only if data is present in the payload
-        if appoint_date_time is not None:
-            updates[COL_APPOINT_DATE_TIME] = appoint_date_time
-        if appointment_time is not None:
-            updates[COL_APPOINTMENT_TIME] = appointment_time
         if call_status is not None:
             updates[COL_CALL_STATUS] = call_status
         if call_summary is not None:
             updates[COL_CALL_SUMMARY] = call_summary
-        if email_id is not None: # Only update emailID if the email parameter was provided
-            updates[COL_EMAIL_ID] = email_id
 
         if not updates:
             logging.info(f"No valid update parameters provided in the payload for row {sheet_row_index}.")
@@ -144,7 +129,6 @@ def update_google_sheet(request):
 
         # Perform updates for each column
         for col, value in updates.items():
-            # gspread's update_cell is efficient for single cell updates
             worksheet.update_cell(sheet_row_index, col, value)
             logging.info(f"Updated row {sheet_row_index}, column {col} with value: '{value}'")
 
@@ -154,4 +138,3 @@ def update_google_sheet(request):
     except Exception as e:
         logging.error(f"❌ Error updating Google Sheet for row {sheet_row_index}: {e}")
         return f'Internal Server Error: {e}', 500
-
