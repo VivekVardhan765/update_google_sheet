@@ -61,8 +61,7 @@ def get_sheet():
 def update_google_sheet(request):
     """
     HTTP Cloud Run function to update Google Sheet based on Twilio Studio webhook.
-    This function expects a POST request with a JSON payload containing
-    the sheetRowIndex, callStatus, and callSummary.
+    This function now expects parameters in the URL query string.
 
     Args:
         request (flask.Request): The request object.
@@ -72,28 +71,22 @@ def update_google_sheet(request):
         Response object using `make_response`
         <https://flask.palletsprojects.com/en/1.1.x/api/#flask.make_response>.
     """
-    # Ensure the request method is POST
-    if request.method != 'POST':
-        logging.warning(f"Method Not Allowed: Received {request.method} request.")
+    # Ensure the request method is GET
+    if request.method != 'GET':
+        logging.warning(f"Method Not Allowed: Received {request.method} request. Expected GET.")
         return 'Method Not Allowed', 405
 
-    # Parse the JSON payload from the request body
-    request_json = request.get_json(silent=True)
-    if not request_json:
-        logging.error("Bad Request: JSON payload missing or invalid.")
-        return 'Bad Request: JSON payload missing or invalid', 400
+    # Extract parameters from the URL query string
+    # request.args is a dictionary-like object for query parameters
+    sheet_row_index = request.args.get('sheetRowIndex')
+    call_status = request.args.get('callStatus')
+    call_summary = request.args.get('callSummary')
 
-    logging.info(f"Received payload: {json.dumps(request_json, indent=2)}")
-
-    # Extract parameters from the incoming webhook payload.
-    # Only expecting sheetRowIndex, callStatus, and callSummary now.
-    sheet_row_index = request_json.get('sheetRowIndex')
-    call_status = request_json.get('callStatus')
-    call_summary = request_json.get('callSummary')
+    logging.info(f"Received query parameters: sheetRowIndex={sheet_row_index}, callStatus={call_status}, callSummary={call_summary}")
 
     # Validate sheet_row_index
     if not sheet_row_index:
-        logging.error("Bad Request: sheetRowIndex is required in the payload.")
+        logging.error("Bad Request: sheetRowIndex is required in the query parameters.")
         return 'Bad Request: sheetRowIndex is required', 400
 
     try:
@@ -117,14 +110,14 @@ def update_google_sheet(request):
         COL_CALL_SUMMARY = 6        # Column F
 
         updates = {}
-        # Populate updates dictionary only if data is present in the payload
+        # Populate updates dictionary only if data is present in the query parameters
         if call_status is not None:
             updates[COL_CALL_STATUS] = call_status
         if call_summary is not None:
             updates[COL_CALL_SUMMARY] = call_summary
 
         if not updates:
-            logging.info(f"No valid update parameters provided in the payload for row {sheet_row_index}.")
+            logging.info(f"No valid update parameters provided in the query for row {sheet_row_index}.")
             return 'No valid updates provided', 200 # Still return 200 if nothing to update
 
         # Perform updates for each column
