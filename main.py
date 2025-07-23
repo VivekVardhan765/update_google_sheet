@@ -14,81 +14,81 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
-sheet_client = None
-sheet = None
-
-def get_sheet_client():
-    global sheet_client
-    if sheet_client is None:
-        try:
-            creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_JSON")
-            if not creds_json:
-                raise ValueError("Missing GCP_SERVICE_ACCOUNT_KEY_JSON environment variable.")
-
-            creds_info = json.loads(creds_json)
-            creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-            sheet_client = gspread.authorize(creds)
-            logging.info("✅ Google Sheets client initialized.")
-        except Exception as e:
-            logging.error(f"❌ Failed to initialize client: {e}")
-            raise
-    return sheet_client
-
-def get_sheet():
-    global sheet
-    if sheet is None:
-        try:
-            spreadsheet_id = os.environ.get("SPREADSHEET_ID")
-            if not spreadsheet_id:
-                raise ValueError("Missing SPREADSHEET_ID environment variable.")
-            client = get_sheet_client()
-            sheet = client.open_by_key(spreadsheet_id).sheet1
-            logging.info("✅ Opened target sheet.")
-        except Exception as e:
-            logging.error(f"❌ Failed to open sheet: {e}")
-            raise
-    return sheet
+# (Your get_sheet_client and get_sheet functions remain the same)
+# ...
 
 @functions_framework.http
 def update_google_sheet(request):
-    if request.method != 'GET':
-        return 'Method Not Allowed', 405
+    # --- Handle CORS preflight requests ---
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
 
-    args = request.args
-    required_fields = ['sheetRowIndex']
-    optional_fields = {
-        'callStatus': 5,
-        'callSummary': 6,
-        'appointmentDate': 7,
-        'appointmentTime': 8,
-        'emailID': 9
-    }
+    # --- Set standard CORS headers for the actual response ---
+    headers = {'Access-Control-Allow-Origin': '*'}
 
-    # Validate required field
-    if not args.get('sheetRowIndex'):
-        return 'Bad Request: sheetRowIndex is required', 400
-
-    try:
-        row_index = int(args.get('sheetRowIndex'))
-    except ValueError:
-        return 'Bad Request: sheetRowIndex must be an integer', 400
+    # --- Expect a POST request, not GET ---
+    if request.method != 'POST':
+        return ({'error': 'Method Not Allowed'}, 405, headers)
 
     try:
+        # --- Read parameters from the JSON body ---
+        request_json = request.get_json(silent=True)
+        if not request_json:
+            return ({'error': 'Invalid JSON body'}, 400, headers)
+        
+        # In Dialogflow CX, parameters are nested under 'toolInfo'.'parameters'
+        # In Vertex AI Agent Builder, they might be at the top level.
+        # This code checks for the more common CX structure first.
+        params = request_json.get('toolInfo', {}).get('parameters', request_json)
+        
+        row_index = params.get('sheetRowIndex')
+        if not row_index:
+            raise ValueError("sheetRowIndex is a required parameter")
+
         worksheet = get_sheet()
-        updates = {}
-        for param, col in optional_fields.items():
-            if args.get(param) is not None:
-                updates[col] = args.get(param)
+        
+        column_mapping = {
+            'callStatus': 5,
+            'callSummary': 6,
+            'appointmentDate': 7,
+            'appointmentTime': 8,
+            'emailID': 9
+        }
 
-        if not updates:
-            return 'No valid updates provided', 200
-
-        for col, val in updates.items():
-            worksheet.update_cell(row_index, col, val)
-            logging.info(f"Updated row {row_index}, column {col}: {val}")
-
-        return 'Google Sheet updated successfully', 200
+        # Update cells based on provided parameters
+        for param_name, col_num in column_mapping.items():
+            if param_name in params:
+                worksheet.update_cell(int(row_index), col_num, params[param_name])
+                logging.info(f"Updated row {row_index}, column {col_num} with value: {params[param_name]}")
+        
+        # --- ✅ The required JSON response for Dialogflow ---
+        response_payload = {
+            "tool_response": [{
+                "tag": "updateSheet", # This tag should match the operationId
+                "tool_output": {
+                    "status": "SUCCESS",
+                    "message": f"Sheet successfully updated for row {row_index}"
+                }
+            }]
+        }
+        return (response_payload, 200, headers)
 
     except Exception as e:
         logging.error(f"❌ Exception: {e}")
-        return f'Internal Server Error: {e}', 500
+        error_payload = {
+            "tool_response": [{
+                "tag": "updateSheet",
+                "tool_output": {
+                    "status": "ERROR",
+                    "message": str(e)
+                }
+            }]
+        }
+        # Return 200 OK but with an error status inside the JSON for Dialogflow
+        return (error_payload, 200, headers)
