@@ -40,8 +40,7 @@ def get_sheet_client():
 def unified_dialogflow_webhook(request):
     """
     A single webhook to handle updates from both inbound and outbound Dialogflow agents.
-    - For 'outbound' calls, it updates a specific row.
-    - For 'inbound' calls, it appends a new row with detailed call information.
+    It intelligently inspects request parameters and headers to find the caller's phone number.
     """
     if request.method == 'OPTIONS':
         headers = {
@@ -96,15 +95,23 @@ def unified_dialogflow_webhook(request):
                 raise ValueError("INBOUND_SPREADSHEET_ID environment variable not set.")
             worksheet = client.open_by_key(spreadsheet_id).sheet1
 
-            # Convert list of insights to a single string
+            # --- NEW: INTELLIGENT PHONE NUMBER CAPTURE ---
+            # 1. Try to get it from the tool parameter first.
+            caller_phone = params.get('callerPhone') 
+            # 2. If not found, check the request headers (common for telephony integrations).
+            if not caller_phone:
+                caller_phone = request.headers.get('X-Goog-Caller-Id') # A common header for this
+            # 3. If still not found, default to 'N/A'.
+            if not caller_phone:
+                caller_phone = 'N/A'
+            
             insights_list = params.get('collected_insights', [])
             insights_str = ", ".join(insights_list) if isinstance(insights_list, list) else 'N/A'
 
-            # Prepare the row data in the correct order for the sheet
             inbound_data = [
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 params.get('caller_name', 'N/A'),
-                params.get('callerPhone', 'N/A'), # Assuming Dialogflow provides this
+                caller_phone, # Use the intelligently captured phone number
                 params.get('business_details', 'N/A'),
                 params.get('inquiry_type', 'N/A'),
                 params.get('customer_problem', 'N/A'),
