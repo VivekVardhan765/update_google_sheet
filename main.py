@@ -37,13 +37,12 @@ def get_sheet_client():
     return sheet_client
 
 @functions_framework.http
-def update_google_sheet(request):
+def unified_dialogflow_webhook(request):
     """
     A single webhook to handle updates from both inbound and outbound Dialogflow agents.
     - For 'outbound' calls, it updates a specific row.
-    - For 'inbound' calls, it appends a new row.
+    - For 'inbound' calls, it appends a new row with detailed call information.
     """
-    # Handle CORS preflight requests
     if request.method == 'OPTIONS':
         headers = {
             'Access-Control-Allow-Origin': '*',
@@ -72,14 +71,14 @@ def update_google_sheet(request):
 
         # --- LOGIC FOR OUTBOUND CALLS ---
         if call_type == 'outbound':
-            spreadsheet_id = os.environ.get("SPREADSHEET_ID") # Your original outbound sheet ID
+            spreadsheet_id = os.environ.get("SPREADSHEET_ID")
             if not spreadsheet_id:
                 raise ValueError("SPREADSHEET_ID environment variable not set.")
             worksheet = client.open_by_key(spreadsheet_id).sheet1
             
             row_index = params.get('sheetRowIndex')
             if row_index is None:
-                raise ValueError("sheetRowIndex is a required parameter for outbound calls.")
+                raise ValueError("sheetRowIndex is required for outbound calls.")
 
             column_mapping = {
                 'callStatus': 5, 'callSummary': 6, 'appointmentDate': 7,
@@ -90,26 +89,38 @@ def update_google_sheet(request):
                     worksheet.update_cell(int(row_index), col_num, str(params[param_name]))
             logging.info(f"Updated outbound sheet for row {row_index}")
 
-        # --- LOGIC FOR INBOUND CALLS ---
+        # --- LOGIC FOR INBOUND CALLS (UPDATED) ---
         elif call_type == 'inbound':
-            spreadsheet_id = os.environ.get("INBOUND_SPREADSHEET_ID") # Your new inbound sheet ID
+            spreadsheet_id = os.environ.get("INBOUND_SPREADSHEET_ID")
             if not spreadsheet_id:
                 raise ValueError("INBOUND_SPREADSHEET_ID environment variable not set.")
             worksheet = client.open_by_key(spreadsheet_id).sheet1
 
+            # Convert list of insights to a single string
+            insights_list = params.get('collected_insights', [])
+            insights_str = ", ".join(insights_list) if isinstance(insights_list, list) else 'N/A'
+
+            # Prepare the row data in the correct order for the sheet
             inbound_data = [
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                params.get('customerName', 'N/A'),
-                params.get('callerPhone', 'N/A'),
-                params.get('businessType', 'N/A'),
-                params.get('details', 'N/A'),
-                params.get('callSummary', 'N/A')
+                params.get('caller_name', 'N/A'),
+                params.get('callerPhone', 'N/A'), # Assuming Dialogflow provides this
+                params.get('business_details', 'N/A'),
+                params.get('inquiry_type', 'N/A'),
+                params.get('customer_problem', 'N/A'),
+                params.get('resolution_summary', 'N/A'),
+                params.get('follow_up_action', 'N/A'),
+                params.get('escalation_details', 'N/A'),
+                params.get('phone_number', 'N/A'),
+                params.get('mail_id', 'N/A'),
+                params.get('satisfaction_rating', 'N/A'),
+                insights_str
             ]
             worksheet.append_row(inbound_data)
-            logging.info(f"Appended new row to inbound sheet for {params.get('customerName')}")
+            logging.info(f"Appended new row to inbound sheet for {params.get('caller_name')}")
 
         else:
-            raise ValueError(f"Invalid callType: '{call_type}'. Must be 'inbound' or 'outbound'.")
+            raise ValueError(f"Invalid callType: '{call_type}'.")
 
         # --- SUCCESS RESPONSE ---
         response_payload = {
