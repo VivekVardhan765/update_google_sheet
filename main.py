@@ -40,7 +40,7 @@ def get_sheet_client():
 def unified_dialogflow_webhook(request):
     """
     A single webhook to handle updates from both inbound and outbound Dialogflow agents.
-    It intelligently inspects the webhook payload, request parameters, and headers to find the caller's phone number.
+    It now correctly parses the webhookPayloads field as the primary method for getting the caller ID.
     """
     if request.method == 'OPTIONS':
         headers = {
@@ -88,33 +88,29 @@ def unified_dialogflow_webhook(request):
                     worksheet.update_cell(int(row_index), col_num, str(params[param_name]))
             logging.info(f"Updated outbound sheet for row {row_index}")
 
-        # --- LOGIC FOR INBOUND CALLS (UPDATED) ---
+        # --- LOGIC FOR INBOUND CALLS (CORRECTED) ---
         elif call_type == 'inbound':
             spreadsheet_id = os.environ.get("INBOUND_SPREADSHEET_ID")
             if not spreadsheet_id:
                 raise ValueError("INBOUND_SPREADSHEET_ID environment variable not set.")
             worksheet = client.open_by_key(spreadsheet_id).sheet1
 
-            # --- NEW: ROBUST PHONE NUMBER CAPTURE (AS PER DOCUMENTATION) ---
+            # --- ROBUST PHONE NUMBER CAPTURE (FOLLOWING DOCUMENTATION) ---
             caller_phone = 'N/A'
             try:
                 # 1. Primary Method: Check the webhookPayloads field directly.
-                payloads = request_json.get('queryResult', {}).get('webhookPayloads', [])
+                # The full request body is needed, not just the 'params' variable.
+                payloads = request_json.get('sessionInfo', {}).get('parameters', {}).get('webhookPayloads', [])
+                if not payloads: # Fallback for different payload structures
+                    payloads = request_json.get('queryResult', {}).get('webhookPayloads', [])
+
                 for payload in payloads:
                     if 'telephony' in payload and 'caller_id' in payload['telephony']:
                         caller_phone = payload['telephony']['caller_id']
+                        logging.info(f"Found caller_id in webhookPayloads: {caller_phone}")
                         break # Stop once found
-                
-                # 2. Fallback Method 1: Check the tool parameter (from session param).
-                if caller_phone == 'N/A':
-                    caller_phone = params.get('callerPhone', 'N/A')
-
-                # 3. Fallback Method 2: Check the request headers.
-                if caller_phone == 'N/A':
-                    caller_phone = request.headers.get('X-Goog-Caller-Id', 'N/A')
-
             except Exception as e:
-                logging.error(f"Error parsing phone number: {e}")
+                logging.error(f"Error parsing phone number from payload: {e}")
                 caller_phone = 'N/A' # Ensure it defaults safely
             
             insights_list = params.get('collected_insights', [])
